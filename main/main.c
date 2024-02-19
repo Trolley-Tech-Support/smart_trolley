@@ -25,15 +25,15 @@
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
 
-#define EXAMPLE_ESP_WIFI_SSID      "VM6193248"
-#define EXAMPLE_ESP_WIFI_PASS      "bpvoj9gvuuTyfmzv"
+#define EXAMPLE_ESP_WIFI_SSID      "XYZ"
+#define EXAMPLE_ESP_WIFI_PASS      "123"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
-#define DB_IP               "140,238,228,234"
-#define DB_PORT             8086
-#define DB_USER             "pastav"
-#define DB_PASSWORD         "ase123pastav"
-#define DB_NAME             "iotdata"
+#define DB_IP               "1.1.1.1"
+#define DB_PORT             port(8086)
+#define DB_USER             "user"
+#define DB_PASSWORD         "pass"
+#define DB_NAME             "dbName"
 
 #if CONFIG_ESP_WPA3_SAE_PWE_HUNT_AND_PECK
 #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_HUNT_AND_PECK
