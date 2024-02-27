@@ -4,7 +4,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
-#include "app_peripherals.h"
+#include "freertos/semphr.h"
+#include "freertos/queue.h"
+#include <driver/i2s.h>
+#include <driver/gpio.h>
 #include "esp_code_scanner.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -15,25 +18,30 @@
 #include "esp_spiffs.h"
 #include "esp_camera.h"
 #include <esp_http_client.h>
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_ops.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "lcd.h"
 #include "board.h"
 #include "nvs_flash.h"
 #include <cJSON.h> 
+#include "app_peripherals.h"
+#include "fonts.h"
+
+#define EXAMPLE_ESP_WIFI_SSID      "VM6193248"
+#define EXAMPLE_ESP_WIFI_PASS      "bpvoj9gvuuTyfmzv"
+#define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
 
-#define EXAMPLE_ESP_WIFI_SSID      "XYZ"
-#define EXAMPLE_ESP_WIFI_PASS      "123"
-#define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
-
-#define DB_IP               "1.1.1.1"
-#define DB_PORT             port(8086)
-#define DB_USER             "user"
-#define DB_PASSWORD         "pass"
-#define DB_NAME             "dbName"
+#define DB_IP               "140,238,228,234"
+#define DB_PORT             8086
+#define DB_USER             "pastav"
+#define DB_PASSWORD         "ase123pastav"
+#define DB_NAME             "iotdata"
 
 #if CONFIG_ESP_WPA3_SAE_PWE_HUNT_AND_PECK
 #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_HUNT_AND_PECK
@@ -71,8 +79,11 @@
 
 #define IMAGE_MAX_SIZE (100 * 1024)/**< The maximum size of a single picture in the boot animation */
 #define IMAGE_WIDTH    320 /*!< width of jpeg file */
-#define IMAGE_HIGHT    240 /*!< height of jpeg file */
+#define IMAGE_HEIGHT    240 /*!< height of jpeg file */
 #define portTICK_RATE_MS 10
+
+#define MAX_NAME_LENGTH 64
+#define MAX_PRICE_LENGTH 5
 
 static const char *TAG = "SMART_TROLLEY";
 
@@ -81,10 +92,21 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static int s_retry_num = 0;
 
-const char* TARGET_URL = "http://3.249.30.30:1037/item/details";
-const int TARGET_PORT = 80; // Assuming HTTP, adjust for HTTPS
-const char* JSON_BODY = "{\"id\": \"1\", \"name\": \"Product A\"}";
-char response_buffer[1024]; // Adjust size as needed for expected response
+const int TARGET_PORT = 80;
+char response_buffer[1024];
+
+typedef struct {
+    int product_id;
+    char name[MAX_NAME_LENGTH];
+    char price[MAX_PRICE_LENGTH];
+} ProductInfo;
+
+typedef struct {
+    char *productName;
+    double price;
+    int product_id;
+    int quantity;
+} TableRow;
 
 /**
  * @brief rgb -> rgb565
@@ -117,7 +139,7 @@ void esp_photo_display(void)
     size_t total = 0, used = 0;
     ESP_ERROR_CHECK(esp_spiffs_info(NULL, &total, &used));
 
-    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HIGHT * 2);
+    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
     if (NULL == rgb565) {
         ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
         return;
@@ -137,50 +159,26 @@ void esp_photo_display(void)
     fclose(fd);
 
     jpg2rgb565(buf, read_bytes, rgb565, JPG_SCALE_NONE);
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HIGHT - 1);
-    lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HIGHT * sizeof(uint16_t));
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     free(buf);
     free(rgb565);
     vTaskDelay(2000 / portTICK_RATE_MS);
 }
 
-void esp_color_display(void)
+void esp_color_display2(void)
 {
     ESP_LOGI(TAG, "LCD Initiated");
-    uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
+    if (data_buf == NULL) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        return; // Exit the function if allocation fails
+    }
     
     uint16_t color = color565(0, 0, 0);
 
-    for (int r = 0,  j = 0; j < IMAGE_HIGHT; j++) {
-        if (j % 8 == 0) {
-            color = color565(r++, 0, 0);
-        }
-
-        for (int i = 0; i < IMAGE_WIDTH; i++) {
-            data_buf[i + IMAGE_WIDTH * j] = color;
-        }
-    }
-
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HIGHT - 1);
-    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HIGHT * sizeof(uint16_t));
-    vTaskDelay(2000 / portTICK_RATE_MS);
-
-    for (int g = 0,  j = 0; j < IMAGE_HIGHT; j++) {
-        if (j % 8 == 0) {
-            color = color565(0, g++, 0);
-        }
-
-        for (int i = 0; i < IMAGE_WIDTH; i++) {
-            data_buf[i + IMAGE_WIDTH * j] = color;
-        }
-    }
-
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HIGHT - 1);
-    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HIGHT * sizeof(uint16_t));
-    vTaskDelay(2000 / portTICK_RATE_MS);
-
-    for (int b = 0,  j = 0; j < IMAGE_HIGHT; j++) {
+    for (int b = 0,  j = 0; j < IMAGE_HEIGHT; j++) {
         if (j % 8 == 0) {
             color = color565(0, 0, b++);
         }
@@ -190,10 +188,70 @@ void esp_color_display(void)
         }
     }
 
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HIGHT - 1);
-    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HIGHT * sizeof(uint16_t));
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     vTaskDelay(2000 / portTICK_RATE_MS);
+
+    heap_caps_free(data_buf);
 }
+
+void esp_color_display(void)
+{
+    ESP_LOGI(TAG, "LCD Initiated");
+    uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+
+    if (data_buf == NULL) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        return; // Exit the function if allocation fails
+    }
+    
+    uint16_t color = color565(0, 0, 0);
+
+    for (int r = 0,  j = 0; j < IMAGE_HEIGHT; j++) {
+        if (j % 8 == 0) {
+            color = color565(r++, 0, 0);
+        }
+
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color;
+        }
+    }
+
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    vTaskDelay(2000 / portTICK_RATE_MS);
+
+    for (int g = 0,  j = 0; j < IMAGE_HEIGHT; j++) {
+        if (j % 8 == 0) {
+            color = color565(0, g++, 0);
+        }
+
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color;
+        }
+    }
+
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    vTaskDelay(2000 / portTICK_RATE_MS);
+
+    for (int b = 0,  j = 0; j < IMAGE_HEIGHT; j++) {
+        if (j % 8 == 0) {
+            color = color565(0, 0, b++);
+        }
+
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color;
+        }
+    }
+
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    vTaskDelay(2000 / portTICK_RATE_MS);
+
+    heap_caps_free(data_buf);
+}
+
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -283,83 +341,94 @@ void wifi_init_sta(void)
     }
 }
 
-void interpret_json_response(char *response) {
+void interpret_json_response(char *response, ProductInfo *productInfo) {
+    ESP_LOGI(TAG, "Received JSON response: %s", response);
     cJSON *root = cJSON_Parse(response);
     if (root) {
-        // Get item name and price using cJSON functions
-        cJSON *item_name = cJSON_GetObjectItem(root, "item");
-        if (item_name && item_name->type == cJSON_String) {
-            ESP_LOGI(TAG, "Item name: %s", item_name->valuestring);
-        }
+        cJSON *product_id = cJSON_GetObjectItem(root, "product_id");
+        cJSON *name = cJSON_GetObjectItem(root, "name");
         cJSON *price = cJSON_GetObjectItem(root, "price");
-        if (price && price->type == cJSON_String) {
-            ESP_LOGI(TAG, "Price: Eur%s", price->valuestring);
+
+        if (product_id && product_id->type == cJSON_Number &&
+            name && name->type == cJSON_String &&
+            price && price->type == cJSON_String) {
+
+            productInfo->product_id = product_id->valueint;
+            strncpy(productInfo->name, name->valuestring, MAX_NAME_LENGTH - 1);
+            productInfo->name[MAX_NAME_LENGTH - 1] = '\0';
+
+            strncpy(productInfo->price, price->valuestring, MAX_PRICE_LENGTH - 1);
+            productInfo->price[MAX_PRICE_LENGTH - 1] = '\0';
+
+            ESP_LOGI(TAG, "Product ID: %d", productInfo->product_id);
+            ESP_LOGI(TAG, "Name: %s", productInfo->name);
+            ESP_LOGI(TAG, "Price: %s", productInfo->price);
+        } else {
+            ESP_LOGE(TAG, "Failed to extract product information from JSON");
         }
-        // Free the allocated memory
+
         cJSON_Delete(root);
     } else {
         ESP_LOGE(TAG, "Failed to parse JSON response!");
     }
 }
 
-static void http_native_request(void)
-{
-    // Declare local_response_buffer with size (MAX_HTTP_OUTPUT_BUFFER + 1) to prevent out of bound access when
-    // it is used by functions like strlen(). The buffer should only be used upto size MAX_HTTP_OUTPUT_BUFFER
-    char output_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};   // Buffer to store response of http request
+static void http_native_request(const char *qor_id, ProductInfo *product_info) {
+    char output_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
     int content_length = 0;
+
     esp_http_client_config_t config = {
         .url = "http://3.249.30.30:1037/item/details",
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
-    // POST Request
-    const char *post_data = "{\"id\":\"1\", \"name\":\"Product A\"}";
+    char *post_data = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER);
+    if (post_data == NULL) {
+        // Handle memory allocation failure
+        ESP_LOGE(TAG, "Failed to allocate memory for post_data");
+        return; // Or take appropriate action
+    }
+    snprintf(post_data, MAX_HTTP_OUTPUT_BUFFER, "{\"col\": \"qr_identifier\", \"detail\": \"%s\"}", qor_id);
+    
     esp_http_client_set_url(client, "http://3.249.30.30:1037/item/details");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_err_t err = esp_http_client_open(client, strlen(post_data));
+
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
     } else {
-        int wlen = esp_http_client_write(client, post_data, strlen(post_data));
+        int wlen = esp_http_client_write(client, post_data, strlen(post_data) + 1);
+
         if (wlen < 0) {
             ESP_LOGE(TAG, "Write failed");
         }
+
         content_length = esp_http_client_fetch_headers(client);
+
         if (content_length < 0) {
             ESP_LOGE(TAG, "HTTP client fetch headers failed");
         } else {
             int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER);
+
             if (data_read >= 0) {
-                ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %"PRId64,
-                esp_http_client_get_status_code(client),
-                esp_http_client_get_content_length(client));
-                interpret_json_response(output_buffer);
-                // ESP_LOG_BUFFER_HEX(TAG, output_buffer, strlen(output_buffer));
+                ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %" PRId64,
+                         esp_http_client_get_status_code(client),
+                         esp_http_client_get_content_length(client));
+
+                // Interpret and handle the JSON response
+                interpret_json_response(output_buffer, product_info);
             } else {
                 ESP_LOGE(TAG, "Failed to read response");
             }
         }
     }
+
     esp_http_client_cleanup(client);
+    free(post_data);
 }
 
-static void decode_task()
-{   
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    wifi_init_sta();
-
-    // Wait for the WiFi connection to be established
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    
+void lcd_initialize() {
     lcd_config_t lcd_config = {
 #ifdef CONFIG_LCD_ST7789
         .clk_fre         = 80 * 1000 * 1000, /*!< ILI9341 Stable frequency configuration */
@@ -379,11 +448,319 @@ static void decode_task()
     };
 
     lcd_init(&lcd_config);
+}
 
+#define CHAR_WIDTH 8
+#define CHAR_HEIGHT 8
+#define FONT_WIDTH 8
+#define CHAR_SPACING 4
+
+void drawChar(uint16_t *data_buf, int x, int y, char character, uint16_t color) {
+    // Convert to uppercase
+    character = toupper(character);
+
+    // Check for valid character range
+    if (character >= 'A' && character <= 'Z') {
+        int charIndex = character - 'A';
+        for (int col = 0; col < CHAR_WIDTH; col++) {
+            for (int row = 0; row < CHAR_HEIGHT; row++) {
+                if ((fontData[charIndex][col] >> row) & 0x01) {
+                    data_buf[(x + col) + IMAGE_WIDTH * (y + row)] = color;
+                }
+            }
+        }
+    }
+}
+
+void drawString(uint16_t *data_buf, int x, int y, const char *message, uint16_t color) {
+    while (*message != '\0') {
+        drawChar(data_buf, x, y, *message, color);
+        x += CHAR_WIDTH + CHAR_SPACING; // Adjust spacing based on font and desired character separation
+        message++;
+    }
+}
+
+void display_table(TableRow **messageArray, int numRows, int numCols)
+{
+    ESP_LOGI(TAG, "LCD Initiated");
+    int tableRows = 11;
+    int tableCols = 2;
+    int cellHeight = IMAGE_WIDTH / tableRows;
+
+    int cellWidthRight  = IMAGE_HEIGHT / 3;
+    int cellWidthLeft = IMAGE_HEIGHT - cellWidthRight; 
+
+    // Allocate memory for color buffer (assuming 16-bit color)
+    uint16_t *data_buf = (uint16_t *)malloc(IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+
+    if (data_buf == NULL) {
+        // Handle memory allocation failure
+        ESP_LOGE(TAG, "Failed to allocate memory for data_buf");
+        return; // Or take appropriate action   
+    }
+
+
+    // Clear the buffer with white background
+    for (int j = 0; j < IMAGE_HEIGHT; j++) {
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color565(255, 255, 255);
+        }
+    }
+
+    for (int j = 0; j < IMAGE_HEIGHT; j++) {
+        for (int i = 0; i < IMAGE_WIDTH / tableRows; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color565(0, 0, 50);
+        }
+    }
+
+    for (int j = 0; j < IMAGE_HEIGHT; j++) {
+        for (int i = cellHeight * 10; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color565(0, 50, 0);
+        }
+    }
+
+    // Draw table outline with cell padding and spacing
+    for (int row = 0; row < tableRows; row++) {
+        int x = row * cellHeight;
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            if (row > 0) {
+                // Draw horizontal lines for top and bottom of cells (except top row)
+                data_buf[x + IMAGE_WIDTH * i] = color565(0, 0, 0);
+            }
+        }
+    }
+
+    for (int col = 0; col < tableCols; col++) {
+        int y = col * cellWidthRight;
+        for (int j = 0; j < IMAGE_WIDTH; j++) {
+            if (col > 0) {
+                // Draw vertical lines for left and right of cells (except leftmost column)
+                data_buf[j + IMAGE_WIDTH * y] = color565(0, 0, 0);
+            }
+        }
+    }
+
+    for (int i = 0; i < IMAGE_WIDTH; i++) {
+        data_buf[i] = color565(0, 0, 0);  // Top boundary
+        data_buf[i + IMAGE_WIDTH * (IMAGE_HEIGHT - 1)] = color565(0, 0, 0);  // Bottom boundary
+    }
+
+    for (int j = 0; j < IMAGE_HEIGHT; j++) {
+        data_buf[j * IMAGE_WIDTH] = color565(0, 0, 0);  // Left boundary
+        data_buf[IMAGE_WIDTH - 1 + IMAGE_WIDTH * j] = color565(0, 0, 0);  // Right boundary
+    }
+
+    int x = 14.5;
+    int y = 230;
+
+    // Display messages in each cell in black
+    for (int row = 0; row < numRows; row++) {
+        const char *originalProductName = messageArray[row]->productName;
+        double originalPrice = messageArray[row]->price;
+
+        char quantityStr[5];
+        snprintf(quantityStr, sizeof(quantityStr), "%d", messageArray[row]->quantity);
+        
+        char productPrice[20];
+        if (originalPrice != 0.01) {
+            if(messageArray[row]->product_id != 11) {
+                snprintf(productPrice, sizeof(productPrice), "EUR %sX%.2f", quantityStr, originalPrice);
+            } else {
+                snprintf(productPrice, sizeof(productPrice), "EUR %.2f", originalPrice);
+            }
+        } else {
+            snprintf(productPrice, sizeof(productPrice), "%s", "PRICE");
+        }
+
+        char productName[50];
+        if (originalPrice != 0.01 && messageArray[row]->product_id != 11) {
+            snprintf(productName, sizeof(productName), "%s Qty %s", originalProductName, quantityStr);
+        } else {
+            snprintf(productName, sizeof(productName), "%s", originalProductName);
+        }
+
+        for (size_t i = 0; i < strlen(productName); ++i) {
+            char c = productName[i];
+            if (c != ' ' && c != '\0') {
+                const uint8_t* charData = getCharData(c);
+                for (int chcol = 0; chcol < 5; chcol++) {
+                    for (int chrow = 0; chrow < 7; chrow++) {
+                        if ((charData[chcol] >> chrow) & 0x01) {
+                            if((row == numRows-1)) { x = 300; }
+                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0); // Black color
+                        }
+                    }
+                }
+                y -= 6;
+            } else {
+                if(c == ' ') {
+                    y-=6;
+                }
+            }
+        }
+
+        y=70;
+        for (size_t i = 0; i < strlen(productPrice); ++i) {
+            char c = productPrice[i];
+            if (c != ' ' && c != '\0') {
+                const uint8_t* charData = getCharData(c);
+                for (int chcol = 0; chcol < 5; chcol++) {
+                    for (int chrow = 0; chrow < 7; chrow++) {
+                        if ((charData[chcol] >> chrow) & 0x01) {
+                            if((row == numRows-1)) { x = 300; }
+                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0); // Black color
+                        }
+                    }
+                }
+                y -= 6;
+            } else {
+                if(c == ' ') {
+                    y-=6;
+                }
+            }
+        }
+        x+=cellHeight;
+        y=230;
+    }
+
+    // Display the color table
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    heap_caps_free(data_buf);
+    vTaskDelay(2000 / portTICK_RATE_MS);
+}
+
+
+void display_hello2() {
+    // Allocate buffer for LCD data
+    uint16_t *data_buf = (uint16_t *)malloc(IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+
+    // Check if memory allocation was successful
+    if (data_buf == NULL) {
+        ESP_LOGE(TAG, "Memory allocation failed");
+        return; // Exit the function if allocation fails
+    }
+
+    // Clear buffer with background color
+    for (int j = 0; j < IMAGE_HEIGHT; j++) {
+        for (int i = 0; i < IMAGE_WIDTH; i++) {
+            data_buf[i + IMAGE_WIDTH * j] = color565(255, 255, 255); // White background
+        }
+    }
+
+    // Display "hello" using fontDataMap
+    int x = 10;
+    int y = 230;
+
+    const char hello[] = "hello";
+    for (size_t i = 0; i < sizeof(hello) - 1; ++i) {
+        char c = hello[i];
+        const uint8_t* charData = getCharData(c);
+        for (int col = 0; col < 5; col++) {
+            for (int row = 0; row < 7; row++) {
+                if ((charData[col] >> row) & 0x01) {
+                    data_buf[(x + col) + IMAGE_WIDTH * (y + row)] = color565(0, 0, 0); // Black color
+                }
+            }
+        }
+        y -= 6;
+    }
+
+    // Display the data on the LCD
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+
+    // Free the allocated memory
+    free(data_buf);
+    vTaskDelay(2000 / portTICK_RATE_MS);
+}
+
+void addRow(TableRow ***table, size_t *rowCount, const char *productName, const char *price, int product_id) {
+
+    for (size_t i = 0; i < *rowCount; i++) {
+        if ((*table)[i]->product_id == product_id) {
+            // Product with the same product_id already exists, increment quantity
+            (*table)[i]->quantity++;
+            return;
+        }
+    }
+
+    *table = realloc(*table, (*rowCount + 1) * sizeof(TableRow *));
+    if (*table == NULL) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    (*table)[*rowCount] = malloc(sizeof(TableRow));
+    if ((*table)[*rowCount] == NULL) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    (*table)[*rowCount]->productName = strdup(productName);
+    if ((*table)[*rowCount]->productName == NULL) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    (*table)[*rowCount]->price = strtod(price, NULL);
+
+    if ((*table)[*rowCount]->price == 0.0 && errno == ERANGE) {
+        perror("Error converting price to double");
+        exit(EXIT_FAILURE);
+    }
+
+    (*table)[*rowCount]->product_id = product_id;
+    (*table)[*rowCount]->quantity = 1;
+
+    (*rowCount)++;
+}
+
+void removeRow(TableRow ***table, size_t *rowCount, int product_id) {
+    for (size_t i = 0; i < *rowCount; i++) {
+        if ((*table)[i]->product_id == product_id) {
+            free((*table)[i]->productName);
+            free((*table)[i]);
+
+            for (size_t j = i; j < (*rowCount) - 1; j++) {
+                (*table)[j] = (*table)[j + 1];
+            }
+
+            (*rowCount)--;
+
+            *table = realloc(*table, *rowCount * sizeof(TableRow *));
+            if (*rowCount > 0 && *table == NULL) {
+                perror("Memory allocation failed");
+                exit(EXIT_FAILURE);
+            }
+
+            return;
+        }
+    }
+
+    fprintf(stderr, "Product with product_id %d not found in the table\n", product_id);
+}
+
+static void decode_task()
+{   
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+
+    // Wait for the WiFi connection to be established
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    lcd_initialize();
     /*< Show a picture */
     // esp_photo_display();
     /*< RGB display */
-    esp_color_display();
+    // esp_color_display();
 
     if(ESP_OK != app_camera_init()) {
         vTaskDelete(NULL);
@@ -392,11 +769,22 @@ static void decode_task()
 
     camera_fb_t *fb = NULL;
     int64_t time1, time2;
+    
+    TableRow **table = NULL;
+    size_t rowCount = 0;
+    float total = 0.00;
+
+    ProductInfo product_info;
+
+    addRow(&table, &rowCount, "Products", "0.01", 0);
+    addRow(&table, &rowCount, "Total", "0.00", 11);
+    display_table(table, rowCount, 2);
+
     while (1)
     {
         fb = esp_camera_fb_get();
         if(fb == NULL){
-            ESP_LOGI(TAG, "camera get failed\n");
+            ESP_LOGI(TAG, "Camera get failed\n");
             continue;
         }
 
@@ -412,13 +800,32 @@ static void decode_task()
             time2 = esp_timer_get_time();
             ESP_LOGI(TAG, "Decode time in %lld ms.", (time2 - time1) / 1000);
             ESP_LOGI(TAG, "Decoded %s symbol \"%s\"\n", result.type_name, result.data);
-            http_native_request();         
+            
+            http_native_request(result.data, &product_info);
+
+            const char *product_name = product_info.name;
+            const char *product_price = product_info.price;
+            float price_as_float = strtof(product_price, NULL);
+            int prodcut_id = product_info.product_id;
+
+            total+=price_as_float;
+
+            removeRow(&table, &rowCount, 11);
+            addRow(&table, &rowCount, product_name, product_price, prodcut_id);
+
+            esp_color_display2();
+
+            ESP_LOGI(TAG, "Displaying table...");
+            char total_str[5];
+            snprintf(total_str, sizeof(total_str), "%.2f", total);
+            addRow(&table, &rowCount, "Total", total_str, 11);
+            display_table(table, rowCount, 2); 
         }
 
         esp_code_scanner_destroy(esp_scn);
 
         esp_camera_fb_return(fb);
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(70 / portTICK_PERIOD_MS);
     }
 }
 
