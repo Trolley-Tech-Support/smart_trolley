@@ -37,11 +37,11 @@
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2048
 
-#define DB_IP               "140,238,228,234"
-#define DB_PORT             8086
-#define DB_USER             "pastav"
-#define DB_PASSWORD         "ase123pastav"
-#define DB_NAME             "iotdata"
+#define DB_IP               "DB_IP"
+#define DB_PORT             DB_PORT
+#define DB_USER             "DB_USER"
+#define DB_PASSWORD         "DB_PASS"
+#define DB_NAME             "DB_NAME"
 
 #if CONFIG_ESP_WPA3_SAE_PWE_HUNT_AND_PECK
 #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_HUNT_AND_PECK
