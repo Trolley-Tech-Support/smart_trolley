@@ -30,8 +30,8 @@
 #include "app_peripherals.h"
 #include "fonts.h"
 
-#define EXAMPLE_ESP_WIFI_SSID      "VM6193248"
-#define EXAMPLE_ESP_WIFI_PASS      "bpvoj9gvuuTyfmzv"
+#define EXAMPLE_ESP_WIFI_SSID      "SSID"
+#define EXAMPLE_ESP_WIFI_PASS      "PASS"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
 #define MAX_HTTP_RECV_BUFFER 512
