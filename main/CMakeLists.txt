@@ -5,4 +5,8 @@ idf_component_register(SRCS
 			INCLUDE_DIRS 
 				include
 			
+			EMBED_TXTFILES
+				../certs/client_cert.pem
+				../certs/client_key.pem
+			
 			)
