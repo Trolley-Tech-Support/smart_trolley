@@ -25,10 +25,6 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
-#include "esp_tls.h"
-#include "esp_crt_bundle.h"
-#include "esp_mac.h"
-#include "esp_random.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "lcd.h"
@@ -148,49 +144,6 @@ uint16_t color565(uint8_t r, uint8_t g, uint8_t b)
 {
     uint16_t color = ((r  << 11) | (g  << 6) | b);
     return (color << 8) | (color >> 8);
-}
-
-void esp_photo_display(void)
-{
-    ESP_LOGI(TAG, "LCD Working ........");
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = "/spiffs",
-        .partition_label = NULL,
-        .max_files = 5,
-        .format_if_mount_failed = false
-    };
-
-    /*!< Use settings defined above to initialize and mount SPIFFS filesystem. */
-    /*!< Note: esp_vfs_spiffs_register is an all-in-one convenience function. */
-    ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf));
-    size_t total = 0, used = 0;
-    ESP_ERROR_CHECK(esp_spiffs_info(NULL, &total, &used));
-
-    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
-    if (NULL == rgb565) {
-        ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
-        return;
-    }
-    uint8_t *buf = malloc(IMAGE_MAX_SIZE);
-    if (NULL == buf) {
-        free(rgb565);
-        ESP_LOGE(TAG, "can't alloc memory for jpeg file buffer");
-        return;
-    }
-    int read_bytes = 0;
-
-    FILE *fd = fopen("/spiffs/image.jpg", "r");
-
-    read_bytes = fread(buf, 1, IMAGE_MAX_SIZE, fd);
-    ESP_LOGI(TAG, "spiffs:read_bytes:%d  fd: %p", read_bytes, fd);
-    fclose(fd);
-
-    jpg2rgb565(buf, read_bytes, rgb565, JPG_SCALE_NONE);
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
-    lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
-    free(buf);
-    free(rgb565);
-    vTaskDelay(2000 / portTICK_RATE_MS);
 }
 
 void esp_color_display_green(void)
@@ -597,62 +550,13 @@ void interpret_json_response(char *response, ProductInfo *productInfo) {
     }
 }
 
-
-esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
-{
-    switch (evt->event_id)
-    {
-    case HTTP_EVENT_ON_DATA:
-        printf("HTTP GET EVENT DATA: %s", (char *)evt->data);
-        break;
-    
-    default:
-        break;
-    }
-    return ESP_OK;
-}
-
 static bool https_native_request(const char *qor_id, ProductInfo *product_info) {
     char output_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
     int content_length = 0;
 
-    extern const unsigned char client_cert_start[] asm("_binary_client_cert_pem_start");
-    extern const unsigned char client_cert_end[] asm("_binary_client_cert_pem_end");
-    size_t  client_cert_len = client_cert_end - client_cert_start;
-    extern const unsigned char client_key_start[] asm("_binary_client_key_pem_start");
-    extern const unsigned char client_key_end[] asm("_binary_client_key_pem_end");
-    size_t  client_key_len = client_cert_end - client_cert_start;
-
-    esp_tls_cfg_t tls_cfg = {
-        .cacert_pem_buf = (const unsigned char *) client_cert_start,
-        .cacert_bytes = client_cert_len,
-    };
-
-    esp_tls_t *tls = esp_tls_init();
-
-    if (!tls) {
-        ESP_LOGE(TAG, "Failed to allocate esp_tls handle!");
-    }
-
-    if (esp_tls_conn_http_new_sync("https://iot.api.pastav.com/item/details", &tls_cfg, tls) == 1) {
-        ESP_LOGI(TAG, "Connection established...");
-    } else {
-        ESP_LOGE(TAG, "Connection failed...");
-    }
-
     esp_http_client_config_t config = {
-        .url = "https://iot.api.pastav.com/item/details",
+        .url = "http://54.246.162.92:1037/item/details",
         .method = HTTP_METHOD_POST,
-        .event_handler = client_event_get_handler,
-        .auth_type = HTTP_AUTH_TYPE_NONE,
-        .transport_type = HTTP_TRANSPORT_OVER_SSL,
-        //.cert_pem = (char *)client_cert_start,
-        //.cert_len = client_cert_len,
-        //.client_cert_pem = (char *)client_cert_start,
-        //.client_cert_len =  client_cert_len,
-        //.client_key_pem = (char *)client_key_start,
-        //.client_key_len = client_key_len,
-        .skip_cert_common_name_check = true,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -1034,7 +938,7 @@ void removeRow(TableRow ***table, size_t *rowCount, double *total, int product_i
     ESP_LOGI(TAG, "Item is not available in the cart!");
 }
 
-void payments_task(TableRow **table, int rowCount, double total)
+void payments_task2(TableRow **table, int rowCount, double total)
 {
     double voltage = 0;
     xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
@@ -1047,8 +951,125 @@ void payments_task(TableRow **table, int rowCount, double total)
         esp_color_display_blue();
 
         ESP_LOGI(TAG, "Total payment to be done : %.2f", total);
-        ESP_LOGI(TAG, "Payments yet to be implemented");
         display_table(table, rowCount, 2);
+
+    }
+}
+
+void display_qor(const char *qr_code_data) {
+    // Allocate memory for JPEG image buffer
+    uint8_t *jpg_buffer = malloc(IMAGE_MAX_SIZE);
+    if (jpg_buffer == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for JPEG buffer");
+        return;
+    }
+
+    // Copy QR code data (JPEG image) into the buffer
+    memcpy(jpg_buffer, qr_code_data, strlen(qr_code_data));
+
+    // Convert JPEG image to RGB565 format
+    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
+    if (rgb565 == NULL) {
+        free(jpg_buffer);
+        ESP_LOGE(TAG, "Failed to allocate memory for RGB565 buffer");
+        return;
+    }
+    jpg2rgb565(jpg_buffer, strlen(qr_code_data), rgb565, JPG_SCALE_NONE);
+
+    // Send RGB565 data to the LCD for display
+    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+    lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+
+    // Free allocated memory
+    free(jpg_buffer);
+    free(rgb565);
+}
+
+
+void payments_task(TableRow **table, int rowCount, double total) {
+    double voltage = 0;
+    xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
+    
+    if (voltage > 0.38 - DEVIATION && voltage <= 0.38 + DEVIATION) {
+        ESP_LOGI(TAG, "LED(K6) -> yellow : Payments Task Initiating .....");
+        ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 255, 255, 0));
+        ESP_ERROR_CHECK(strip->refresh(strip, 0));
+        esp_color_display_blue();
+
+        ESP_LOGI(TAG, "Total payment to be done : %.2f", total);
+        display_table(table, rowCount, 2);
+
+        // Construct JSON payload
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "trolley_id", "4");
+
+        // Construct prodID and quantity arrays
+        cJSON *prodID_array = cJSON_CreateArray();
+        cJSON *quantity_array = cJSON_CreateArray();
+        for (int i = 1; i < rowCount; i++) {
+            if (table[i]->product_id != 11) {
+                cJSON_AddItemToArray(prodID_array, cJSON_CreateNumber(table[i]->product_id));
+                cJSON_AddItemToArray(quantity_array, cJSON_CreateNumber(table[i]->quantity));
+            }
+        }
+        cJSON_AddItemToObject(root, "prodID", prodID_array);
+        cJSON_AddItemToObject(root, "quantity", quantity_array);
+
+        cJSON_AddStringToObject(root, "aspect_ratio", "320,240");
+
+        char *payload = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+
+        // Configure HTTP client
+        esp_http_client_config_t config = {
+            .url = "https://iot.api.pastav.com/payment/start",
+            .method = HTTP_METHOD_POST,
+            .timeout_ms = 5000,
+        };
+
+        // Perform HTTP request
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+        esp_http_client_set_post_field(client, payload, strlen(payload));
+
+        esp_err_t err = esp_http_client_perform(client);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "HTTP POST Status = %d", esp_http_client_get_status_code(client));
+            
+            // Get the HTTP response body
+            int content_length = esp_http_client_get_content_length(client);
+            char *response_body = malloc(content_length + 1);
+            if (response_body == NULL) {
+                ESP_LOGE(TAG, "Failed to allocate memory for response body");
+                return;
+            }
+            esp_http_client_read_response(client, response_body, content_length);
+            response_body[content_length] = '\0';
+
+            // Parse JSON response
+            cJSON *response_json = cJSON_Parse(response_body);
+            if (response_json != NULL) {
+                // Extract necessary information from JSON response
+                const char *qr_code_data = cJSON_GetObjectItem(response_json, "qr_code_data")->valuestring;
+                const char *message_to_display = cJSON_GetObjectItem(response_json, "message")->valuestring;
+
+                // Display the extracted message on the display
+                display_qor(message_to_display);
+
+                // Free cJSON object and response body
+                cJSON_Delete(response_json);
+            } else {
+                ESP_LOGE(TAG, "Failed to parse JSON response");
+            }
+
+            free(response_body);
+        } else {
+            ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+        }
+
+        // Clean up HTTP client and payload
+        esp_http_client_cleanup(client);
+        free(payload);
     }
 }
 
@@ -1076,10 +1097,10 @@ bool is_item_added_removed(unsigned long current_weight, unsigned long initial_w
         weight = (long)(initial_weight + product_weight) - (long)current_weight;
     }
     
-    if (weight >= -10 && weight < 10) {
+    if (weight >= -100 && weight < 100) {
         return true;
     } else {
-        if (abs(initial_weight - current_weight) > 10) {
+        if (abs(initial_weight - current_weight) > 120) {
             while (1) {
                 double voltage = 0;
                 xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
@@ -1132,6 +1153,7 @@ static void decode_task()
     TableRow **table = NULL;
     size_t rowCount = 0;
     double total = 0.00;
+    hx711_get_scale(500);
     unsigned long initial_weight = weight_reading_task();
     ESP_LOGI(TAG, "Initial Weight: %ld", initial_weight);
     
@@ -1184,18 +1206,20 @@ static void decode_task()
                 bool is_removed = false;
 
                 while (1) {
-                    if(get_adc_remove()){
+                    if(get_adc_remove() || is_removed){
                         ESP_LOGI(TAG, "Remove item from the cart ...");
                         is_removed = true;
                     } else {
                         ESP_LOGI(TAG, "Place item in the cart ...");
                     }
                     unsigned long current_weight = weight_reading_task();
-                    if(is_item_added_removed(current_weight, initial_weight, weight, get_adc_remove())){
+                    ESP_LOGI(TAG, "Current Weight: %ld", current_weight);
+                    if(is_item_added_removed(current_weight, initial_weight, weight, is_removed)){
                         ESP_LOGI(TAG, "Item placed/removed in the cart!");
                         initial_weight = current_weight;
                         break;
                     }
+                    vTaskDelay(2000 / portTICK_PERIOD_MS);
                 }
 
                 if(is_removed) {

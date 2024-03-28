@@ -9,5 +9,6 @@
         "hx711.h": "c",
         "esp_now.h": "c",
         "esp_random.h": "c"
-    }
+    },
+    "idf.portWin": "COM3"
 }
