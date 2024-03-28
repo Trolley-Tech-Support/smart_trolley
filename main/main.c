@@ -37,9 +37,7 @@
 #include "hx711.h"
 
 #define EXAMPLE_ESP_WIFI_SSID      "VM6193248_2.4GHz"
-#define EXAMPLE_ESP_WIFI_PASS      "bpvoj9gvuuTyfmzv"
-//#define EXAMPLE_ESP_WIFI_SSID      "OnePlus7T"
-//#define EXAMPLE_ESP_WIFI_PASS      "rahul122"
+#define EXAMPLE_ESP_WIFI_PASS      "PASSWORD"
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
