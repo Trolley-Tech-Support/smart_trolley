@@ -8,7 +8,8 @@
         "adc.h": "c",
         "hx711.h": "c",
         "esp_now.h": "c",
-        "esp_random.h": "c"
+        "esp_random.h": "c",
+        "app_peripherals.h": "c"
     },
     "idf.portWin": "COM3"
 }

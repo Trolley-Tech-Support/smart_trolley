@@ -25,6 +25,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_spiffs.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "lcd.h"
@@ -35,6 +36,7 @@
 #include "fonts.h"
 #include "led_strip.h"
 #include "hx711.h"
+#include "mbedtls/base64.h"
 
 #define EXAMPLE_ESP_WIFI_SSID      "VM6193248_2.4GHz"
 #define EXAMPLE_ESP_WIFI_PASS      "PASSWORD"
@@ -42,7 +44,8 @@
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
 #define MAX_HTTP_RECV_BUFFER 512
-#define MAX_HTTP_OUTPUT_BUFFER 2048
+#define MAX_HTTP_OUTPUT_BUFFER 2 * 1024
+#define MAX_HTTP_OUTPUT_BUFFER2 6 * 1024
 
 #if CONFIG_ESP_WPA3_SAE_PWE_HUNT_AND_PECK
 #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_HUNT_AND_PECK
@@ -169,7 +172,6 @@ void esp_color_display_green(void)
     lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
     lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     vTaskDelay(2000 / portTICK_RATE_MS);
-
     heap_caps_free(data_buf);
 }
 
@@ -198,7 +200,6 @@ void esp_color_display_blue(void)
     lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
     lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     vTaskDelay(2000 / portTICK_RATE_MS);
-
     heap_caps_free(data_buf);
 }
 
@@ -227,7 +228,6 @@ void esp_color_display_red(void)
     lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
     lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     vTaskDelay(2000 / portTICK_RATE_MS);
-
     heap_caps_free(data_buf);
 }
 
@@ -307,36 +307,6 @@ double adc_voltage_conversion(uint32_t adc_reading)
     voltage = (2.60 * adc_reading) / 8191;
 
     return voltage;
-}
-
-void button_task(void *arg)
-{
-    /*!<Continuously sample ADC1*/
-    while (1) {
-        uint32_t adc_reading = 0;
-        double voltage = 0;
-
-        /*!< Multisampling */
-        for (int i = 0; i < NO_OF_SAMPLES; i++) {
-            if (unit == ADC_UNIT_1) {
-                adc_reading += adc1_get_raw((adc1_channel_t)channel);
-            } else {
-                int raw;
-                adc2_get_raw((adc2_channel_t)channel, width, &raw);
-                adc_reading += raw;
-            }
-        }
-
-        adc_reading /= NO_OF_SAMPLES;
-
-        voltage = adc_voltage_conversion(adc_reading);
-        ESP_LOGD(TAG, "ADC%d CH%d Raw: %lu   ; Voltage: %0.2lfV", unit, channel, adc_reading, voltage);
-
-        xQueueSend(adc_queue, (double *)&voltage, 0);
-        vTaskDelay(pdMS_TO_TICKS(SAMPLE_TIME));
-    }
-
-    vTaskDelete(NULL);
 }
 
 void led_task(void *arg)
@@ -807,51 +777,6 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
     vTaskDelay(2000 / portTICK_RATE_MS);
 }
 
-
-void display_hello2() {
-    // Allocate buffer for LCD data
-    uint16_t *data_buf = (uint16_t *)malloc(IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
-
-    // Check if memory allocation was successful
-    if (data_buf == NULL) {
-        ESP_LOGE(TAG, "Memory allocation failed");
-        return; // Exit the function if allocation fails
-    }
-
-    // Clear buffer with background color
-    for (int j = 0; j < IMAGE_HEIGHT; j++) {
-        for (int i = 0; i < IMAGE_WIDTH; i++) {
-            data_buf[i + IMAGE_WIDTH * j] = color565(255, 255, 255); // White background
-        }
-    }
-
-    // Display "hello" using fontDataMap
-    int x = 10;
-    int y = 230;
-
-    const char hello[] = "hello";
-    for (size_t i = 0; i < sizeof(hello) - 1; ++i) {
-        char c = hello[i];
-        const uint8_t* charData = getCharData(c);
-        for (int col = 0; col < 5; col++) {
-            for (int row = 0; row < 7; row++) {
-                if ((charData[col] >> row) & 0x01) {
-                    data_buf[(x + col) + IMAGE_WIDTH * (y + row)] = color565(0, 0, 0); // Black color
-                }
-            }
-        }
-        y -= 6;
-    }
-
-    // Display the data on the LCD
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
-    lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
-
-    // Free the allocated memory
-    free(data_buf);
-    vTaskDelay(2000 / portTICK_RATE_MS);
-}
-
 void addRow(TableRow ***table, size_t *rowCount, double *total, const char *productName, const char *price, int product_id) {
 
     for (size_t i = 0; i < *rowCount; i++) {
@@ -936,13 +861,14 @@ void removeRow(TableRow ***table, size_t *rowCount, double *total, int product_i
     ESP_LOGI(TAG, "Item is not available in the cart!");
 }
 
-void payments_task2(TableRow **table, int rowCount, double total)
+
+void cancel_payment(TableRow **table, int rowCount, double total)
 {
     double voltage = 0;
     xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
-    if (voltage > 0.38 - DEVIATION && voltage <= 0.38 + DEVIATION) {
+    if (voltage > 0.82 - DEVIATION && voltage <= 0.82 + DEVIATION) {
             
-        ESP_LOGI(TAG, "LED(K6) -> yellow : Payments Task Initiating .....");
+        ESP_LOGI(TAG, "LED(K5) -> yellow : Payments Task Cancelling .....");
         ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 255, 255, 0));
         ESP_ERROR_CHECK(strip->refresh(strip, 0));
             
@@ -950,41 +876,45 @@ void payments_task2(TableRow **table, int rowCount, double total)
 
         ESP_LOGI(TAG, "Total payment to be done : %.2f", total);
         display_table(table, rowCount, 2);
-
     }
 }
 
-void display_qor(const char *qr_code_data) {
-    // Allocate memory for JPEG image buffer
-    uint8_t *jpg_buffer = malloc(IMAGE_MAX_SIZE);
-    if (jpg_buffer == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for JPEG buffer");
-        return;
-    }
-
-    // Copy QR code data (JPEG image) into the buffer
-    memcpy(jpg_buffer, qr_code_data, strlen(qr_code_data));
-
-    // Convert JPEG image to RGB565 format
+void display_image()
+{
     uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
-    if (rgb565 == NULL) {
-        free(jpg_buffer);
-        ESP_LOGE(TAG, "Failed to allocate memory for RGB565 buffer");
+    if (NULL == rgb565) {
+        ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
         return;
     }
-    jpg2rgb565(jpg_buffer, strlen(qr_code_data), rgb565, JPG_SCALE_NONE);
 
-    // Send RGB565 data to the LCD for display
-    lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
-    lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    uint8_t *buf = malloc(IMAGE_MAX_SIZE);
+    if (NULL == buf) {
+        ESP_LOGE(TAG, "can't alloc memory for jpeg file buffer");
+        return;
+    }
+    
+    int read_bytes = 0;
 
+    FILE *fd = fopen("/spiffs/image.jpg", "r");
+    read_bytes = fread(buf, 1, IMAGE_MAX_SIZE, fd);
+    fclose(fd);
+
+    if (read_bytes > 0) {
+        ESP_LOGI(TAG, "spiffs:read_bytes:%d  fd: %p", read_bytes, fd);
+        jpg2rgb565(buf, read_bytes, rgb565, JPG_SCALE_NONE);
+        lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+        lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    } else {
+        ESP_LOGW(TAG, "spiffs: No data read from file");
+    }
+    
     // Free allocated memory
-    free(jpg_buffer);
+    free(buf);
     free(rgb565);
+    vTaskDelay(2000 / portTICK_RATE_MS);
 }
 
-
-void payments_task(TableRow **table, int rowCount, double total) {
+void payments_task(TableRow **table, int rowCount, double total, char *trolley_id) {
     double voltage = 0;
     xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
     
@@ -999,7 +929,7 @@ void payments_task(TableRow **table, int rowCount, double total) {
 
         // Construct JSON payload
         cJSON *root = cJSON_CreateObject();
-        cJSON_AddStringToObject(root, "trolley_id", "4");
+        cJSON_AddStringToObject(root, "trolley_id", trolley_id);
 
         // Construct prodID and quantity arrays
         cJSON *prodID_array = cJSON_CreateArray();
@@ -1010,17 +940,35 @@ void payments_task(TableRow **table, int rowCount, double total) {
                 cJSON_AddItemToArray(quantity_array, cJSON_CreateNumber(table[i]->quantity));
             }
         }
-        cJSON_AddItemToObject(root, "prodID", prodID_array);
-        cJSON_AddItemToObject(root, "quantity", quantity_array);
+
+        // Convert prodID_array to string
+        char *prodID_string = cJSON_Print(prodID_array);
+        cJSON_Delete(prodID_array);
+
+        // Convert quantity_array to string
+        char *quantity_string = cJSON_Print(quantity_array);
+        cJSON_Delete(quantity_array);
+
+        // Remove brackets from the strings
+        prodID_string[strlen(prodID_string) - 1] = '\0';
+        quantity_string[strlen(quantity_string) - 1] = '\0';
+
+        // Add prodID and quantity strings to the payload
+        cJSON_AddStringToObject(root, "prodID", &prodID_string[1]);
+        cJSON_AddStringToObject(root, "quantity", &quantity_string[1]);
 
         cJSON_AddStringToObject(root, "aspect_ratio", "320,240");
 
         char *payload = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
 
+        //ESP_LOGI(TAG, "HTTP POST Payload: %s", payload);
+
+        int content_length = 0;
+
         // Configure HTTP client
         esp_http_client_config_t config = {
-            .url = "https://iot.api.pastav.com/payment/start",
+            .url = "http://54.246.162.92:1037/payment/start/base64",
             .method = HTTP_METHOD_POST,
             .timeout_ms = 5000,
         };
@@ -1028,46 +976,98 @@ void payments_task(TableRow **table, int rowCount, double total) {
         // Perform HTTP request
         esp_http_client_handle_t client = esp_http_client_init(&config);
         esp_http_client_set_header(client, "Content-Type", "application/json");
-        esp_http_client_set_post_field(client, payload, strlen(payload));
 
-        esp_err_t err = esp_http_client_perform(client);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "HTTP POST Status = %d", esp_http_client_get_status_code(client));
-            
-            // Get the HTTP response body
-            int content_length = esp_http_client_get_content_length(client);
-            char *response_body = malloc(content_length + 1);
-            if (response_body == NULL) {
-                ESP_LOGE(TAG, "Failed to allocate memory for response body");
-                return;
-            }
-            esp_http_client_read_response(client, response_body, content_length);
-            response_body[content_length] = '\0';
-
-            // Parse JSON response
-            cJSON *response_json = cJSON_Parse(response_body);
-            if (response_json != NULL) {
-                // Extract necessary information from JSON response
-                const char *qr_code_data = cJSON_GetObjectItem(response_json, "qr_code_data")->valuestring;
-                const char *message_to_display = cJSON_GetObjectItem(response_json, "message")->valuestring;
-
-                // Display the extracted message on the display
-                display_qor(message_to_display);
-
-                // Free cJSON object and response body
-                cJSON_Delete(response_json);
-            } else {
-                ESP_LOGE(TAG, "Failed to parse JSON response");
-            }
-
-            free(response_body);
-        } else {
-            ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+        esp_err_t err = esp_http_client_open(client, strlen(payload));
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+            free(payload);
+            esp_http_client_cleanup(client);
+            return;
         }
 
-        // Clean up HTTP client and payload
-        esp_http_client_cleanup(client);
+        int wlen = esp_http_client_write(client, payload, strlen(payload) + 1);
+        if (wlen < 0) {
+            ESP_LOGE(TAG, "Write failed");
+            free(payload);
+            esp_http_client_cleanup(client);
+            return;
+        }
+
+        content_length = esp_http_client_fetch_headers(client);
+        if (content_length < 0) {
+            ESP_LOGE(TAG, "HTTP client fetch headers failed");
+            free(payload);
+            esp_http_client_cleanup(client);
+            return;
+        }
+
+        char *output_buffer = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER2);
+        if (output_buffer == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
+            free(payload);
+            esp_http_client_cleanup(client);
+            return;
+        }
+
+        char *image_data = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER2);
+        if (image_data == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for image data buffer");
+            return;
+        }
+
+        int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER2);
+        if (data_read >= 0) {
+            //ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d", esp_http_client_get_status_code(client), content_length);
+            
+            cJSON *root = cJSON_Parse(output_buffer);
+            if (root) {
+                cJSON *image_base64 = cJSON_GetObjectItem(root, "base64_string");
+
+                if (image_base64 && image_base64->type == cJSON_String) {
+                    image_data = strdup(image_base64->valuestring);
+                }
+                cJSON_Delete(root);
+            }
+
+        } else {
+            ESP_LOGE(TAG, "Failed to read response");
+        }
+
+        free(output_buffer);
         free(payload);
+        free(quantity_string);
+        free(prodID_string);
+        esp_http_client_cleanup(client);
+
+        size_t decoded_size = 0;
+        unsigned char *decoded_data = malloc(MAX_HTTP_OUTPUT_BUFFER2);
+        if (decoded_data == NULL) {
+            ESP_LOGE(TAG, "can't alloc memory for decoded data buffer");
+            return;
+        }
+        int decoded_bytes = mbedtls_base64_decode(decoded_data, MAX_HTTP_OUTPUT_BUFFER2, &decoded_size, (unsigned char *) image_data, strlen(image_data));
+            
+        free(image_data);
+
+        if (decoded_bytes < 0) {
+            ESP_LOGE(TAG, "Error decoding base64 data: %d", decoded_bytes);
+            free(decoded_data);
+            return;
+        }
+
+        uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
+        if (NULL == rgb565) {
+            ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
+            return;
+        }
+
+        jpg2rgb565(decoded_data, decoded_bytes, rgb565, JPG_SCALE_NONE);
+        lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+        lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+        free(decoded_data);
+        free(rgb565);
+
+        ESP_LOGI(TAG, "QR CODE DISPLAYED");
     }
 }
 
@@ -1118,28 +1118,98 @@ bool is_item_added_removed(unsigned long current_weight, unsigned long initial_w
 }
 
 
+void spiffs_initialize() {
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = "/spiffs",
+      .partition_label = NULL,
+      .max_files = 5,
+      .format_if_mount_failed = true
+    };
+
+    // Use settings defined above to initialize and mount SPIFFS filesystem.
+    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+
+    #ifdef CONFIG_EXAMPLE_SPIFFS_CHECK_ON_START
+        ESP_LOGI(TAG, "Performing SPIFFS_check().");
+        ret = esp_spiffs_check(conf.partition_label);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "SPIFFS_check() failed (%s)", esp_err_to_name(ret));
+            return;
+        } else {
+            ESP_LOGI(TAG, "SPIFFS_check() successful");
+        }
+    #endif
+
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(conf.partition_label, &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s). Formatting...", esp_err_to_name(ret));
+        esp_spiffs_format(conf.partition_label);
+        return;
+    } else {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
+
+    // Check consistency of reported partiton size info.
+    if (used > total) {
+        ESP_LOGW(TAG, "Number of used bytes cannot be larger than total. Performing SPIFFS_check().");
+        ret = esp_spiffs_check(conf.partition_label);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "SPIFFS_check() failed (%s)", esp_err_to_name(ret));
+            return;
+        } else {
+            ESP_LOGI(TAG, "SPIFFS_check() successful");
+        }
+    }
+
+}
+
+void button_task(void *arg)
+{
+    /*!<Continuously sample ADC1*/
+    while (1) {
+        uint32_t adc_reading = 0;
+        double voltage = 0;
+
+        /*!< Multisampling */
+        for (int i = 0; i < NO_OF_SAMPLES; i++) {
+            if (unit == ADC_UNIT_1) {
+                adc_reading += adc1_get_raw((adc1_channel_t)channel);
+            } else {
+                int raw;
+                adc2_get_raw((adc2_channel_t)channel, width, &raw);
+                adc_reading += raw;
+            }
+        }
+
+        adc_reading /= NO_OF_SAMPLES;
+
+        voltage = adc_voltage_conversion(adc_reading);
+        ESP_LOGD(TAG, "ADC%d CH%d Raw: %lu   ; Voltage: %0.2lfV", unit, channel, adc_reading, voltage);
+
+        xQueueSend(adc_queue, (double *)&voltage, 0);
+        vTaskDelay(pdMS_TO_TICKS(SAMPLE_TIME));
+    }
+
+    vTaskDelete(NULL);
+}
+
 static void decode_task()
 {   
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    wifi_init_sta();
-    initialise_weight_sensor();
-
-    // Wait for the WiFi connection to be established
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    lcd_initialize();
-    /*< Show a picture */
-    // esp_photo_display();
-    /*< RGB display */
-    esp_color_display();
-
     if(ESP_OK != app_camera_init()) {
         vTaskDelete(NULL);
         return;
@@ -1161,26 +1231,30 @@ static void decode_task()
     addRow(&table, &rowCount, &total, "Total", "0.00", 11);
     display_table(table, rowCount, 2);
 
-    ESP_ERROR_CHECK(example_rmt_init(CONFIG_EXAMPLE_RMT_TX_GPIO, CONFIG_EXAMPLE_STRIP_LED_NUMBER, RMT_CHANNEL_0));
-
-    adc_queue = xQueueCreate(1, sizeof(double));
-    adc_init();
-    xTaskCreatePinnedToCore(&button_task, "button_task", 3 * 1024, NULL, 5, NULL, 0);
-    
     ESP_LOGI(TAG, "LED -> white");
     ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 255, 255, 255));
     ESP_ERROR_CHECK(strip->refresh(strip, 0));
 
+    //char trolley_id[17];
+    //static const char alphanumeric[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    //int i;
+    //for (i = 0; i < 16; ++i) {
+    //    trolley_id[i] = alphanumeric[rand() % (sizeof(alphanumeric) - 1)];
+    //}
+    //trolley_id[16] = '\0';
+
     while (1)
     {
-        payments_task(table, rowCount, total);
-
+        payments_task(table, rowCount, total, "4");
+        cancel_payment(table, rowCount, total);
+        
         fb = esp_camera_fb_get();
         if(fb == NULL){
             ESP_LOGI(TAG, "Camera get failed\n");
             continue;
         }
 
+        ESP_LOGI(TAG, "Waiting for a qr code to be scanned");
         time1 = esp_timer_get_time();
         // Decode Progress
         esp_image_scanner_t *esp_scn = esp_code_scanner_create();
@@ -1261,5 +1335,30 @@ static void decode_task()
 
 void app_main()
 {
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+    initialise_weight_sensor();
+
+    // Wait for the WiFi connection to be established
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    lcd_initialize();
+    spiffs_initialize();
+
+    /*< RGB display */
+    esp_color_display();
+
+    ESP_ERROR_CHECK(example_rmt_init(CONFIG_EXAMPLE_RMT_TX_GPIO, CONFIG_EXAMPLE_STRIP_LED_NUMBER, RMT_CHANNEL_0));
+
+    adc_queue = xQueueCreate(1, sizeof(double));
+    adc_init();
+    xTaskCreatePinnedToCore(&button_task, "BUTTON_TASK", 1024, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(decode_task, TAG, 6 * 1024, NULL, 6, NULL, 0);
 }
