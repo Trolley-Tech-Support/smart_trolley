@@ -3,4 +3,4 @@
 nvs, data, nvs, , 0x6000,
 phy_init, data, phy, , 0x1000,
 factory, app, factory, , 0x180000,
-storage, data, spiffs, 0x190000, 100k,
+storage, data, spiffs, 0x190000, 60k,
