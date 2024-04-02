@@ -11,5 +11,6 @@
         "esp_random.h": "c",
         "app_peripherals.h": "c"
     },
-    "idf.portWin": "COM3"
+    "idf.portWin": "COM3",
+    "idf.flashType": "UART"
 }

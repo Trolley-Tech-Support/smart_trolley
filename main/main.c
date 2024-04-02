@@ -25,6 +25,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_crt_bundle.h"
 #include "esp_spiffs.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -34,18 +35,19 @@
 #include "cJSON.h" 
 #include "app_peripherals.h"
 #include "fonts.h"
+#include "certs.h"
 #include "led_strip.h"
 #include "hx711.h"
 #include "mbedtls/base64.h"
 
-#define EXAMPLE_ESP_WIFI_SSID      "VM6193248_2.4GHz"
-#define EXAMPLE_ESP_WIFI_PASS      "PASSWORD"
+#define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
+#define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 
 #define MAX_HTTP_RECV_BUFFER 512
 #define MAX_HTTP_OUTPUT_BUFFER 2 * 1024
-#define MAX_HTTP_OUTPUT_BUFFER2 6 * 1024
+#define MAX_HTTP_OUTPUT_BUFFER2 20 * 1024
 
 #if CONFIG_ESP_WPA3_SAE_PWE_HUNT_AND_PECK
 #define ESP_WIFI_SAE_MODE WPA3_SAE_PWE_HUNT_AND_PECK
@@ -78,21 +80,18 @@
 #define CONFIG_EXAMPLE_RMT_TX_GPIO 45
 #define CONFIG_EXAMPLE_STRIP_LED_NUMBER 1
 
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-#define IMAGE_MAX_SIZE (100 * 1024)/**< The maximum size of a single picture in the boot animation */
-#define IMAGE_WIDTH    320 /*!< width of jpeg file */
-#define IMAGE_HEIGHT    240 /*!< height of jpeg file */
+#define IMAGE_MAX_SIZE (100 * 1024)
+#define IMAGE_WIDTH    320 
+#define IMAGE_HEIGHT    240
 #define portTICK_RATE_MS 10
 
 #define MAX_NAME_LENGTH 64
 #define MAX_PRICE_LENGTH 5
 
-#define DEFAULT_VREF    1100                            /*!< Use adc2_vref_to_gpio() to obtain a better estimate */
+#define DEFAULT_VREF    1100
 #define NO_OF_SAMPLES   64
 #define SAMPLE_TIME     200
 #define DEVIATION 0.1
@@ -104,12 +103,12 @@
 
 static const char *TAG = "SMART_TROLLEY";
 
-/* FreeRTOS event group to signal when we are connected*/
+
 static EventGroupHandle_t s_wifi_event_group;
 
 static int s_retry_num = 0;
 
-static const adc_channel_t channel = ADC_CHANNEL_5;     /*!< PIO7 if ADC1, GPIO17 if ADC2 */
+static const adc_channel_t channel = ADC_CHANNEL_5;
 static const adc_bits_width_t width = ADC_BITWIDTH_13;
 
 static const adc_atten_t atten = ADC_ATTEN_DB_11;
@@ -149,12 +148,11 @@ uint16_t color565(uint8_t r, uint8_t g, uint8_t b)
 
 void esp_color_display_green(void)
 {
-    ESP_LOGI(TAG, "LCD Initiated");
     uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
     if (data_buf == NULL) {
         ESP_LOGE(TAG, "Memory allocation failed");
-        return; // Exit the function if allocation fails
+        return;
     }
     
     uint16_t color = color565(0, 0, 0);
@@ -177,12 +175,11 @@ void esp_color_display_green(void)
 
 void esp_color_display_blue(void)
 {
-    ESP_LOGI(TAG, "LCD Initiated");
     uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
     if (data_buf == NULL) {
         ESP_LOGE(TAG, "Memory allocation failed");
-        return; // Exit the function if allocation fails
+        return;
     }
     
     uint16_t color = color565(0, 0, 0);
@@ -205,12 +202,11 @@ void esp_color_display_blue(void)
 
 void esp_color_display_red(void)
 {
-    ESP_LOGI(TAG, "LCD Initiated");
     uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
     if (data_buf == NULL) {
         ESP_LOGE(TAG, "Memory allocation failed");
-        return; // Exit the function if allocation fails
+        return;
     }
     
     uint16_t color = color565(0, 0, 0);
@@ -234,12 +230,11 @@ void esp_color_display_red(void)
 
 void esp_color_display(void)
 {
-    ESP_LOGI(TAG, "LCD Initiated");
     uint16_t *data_buf = (uint16_t *)heap_caps_calloc(IMAGE_WIDTH * IMAGE_HEIGHT, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 
     if (data_buf == NULL) {
         ESP_LOGE(TAG, "Memory allocation failed");
-        return; // Exit the function if allocation fails
+        return;
     }
     
     uint16_t color = color565(0, 0, 0);
@@ -303,9 +298,7 @@ void adc_init(void)
 double adc_voltage_conversion(uint32_t adc_reading)
 {
     double voltage = 0;
-
     voltage = (2.60 * adc_reading) / 8191;
-
     return voltage;
 }
 
@@ -371,7 +364,6 @@ esp_err_t example_rmt_init(uint8_t gpio_num, int led_number, uint8_t rmt_channel
     ESP_LOGI(TAG, "Initializing RMT ...");
     rmt_config_t config = RMT_DEFAULT_CONFIG_TX(gpio_num, rmt_channel);
 
-    /*!< set counter clock to 40MHz */
     config.clk_div = 2;
 
     ESP_ERROR_CHECK(rmt_config(&config));
@@ -385,9 +377,7 @@ esp_err_t example_rmt_init(uint8_t gpio_num, int led_number, uint8_t rmt_channel
         return ESP_FAIL;
     }
 
-    /*!< Clear LED strip (turn off all LEDs) */
     ESP_ERROR_CHECK(strip->clear(strip, 100));
-    /*!< Show simple rainbow chasing pattern */
 
     return ESP_OK;
 }
@@ -444,11 +434,6 @@ void wifi_init_sta(void)
         .sta = {
             .ssid = EXAMPLE_ESP_WIFI_SSID,
             .password = EXAMPLE_ESP_WIFI_PASS,
-            /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (pasword len => 8).
-             * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
-             * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
-             * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
-             */
             .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
             .sae_pwe_h2e = ESP_WIFI_SAE_MODE,
             .sae_h2e_identifier = EXAMPLE_H2E_IDENTIFIER,
@@ -460,16 +445,12 @@ void wifi_init_sta(void)
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
 
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
             WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
             pdFALSE,
             pdFALSE,
             portMAX_DELAY);
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
@@ -518,13 +499,55 @@ void interpret_json_response(char *response, ProductInfo *productInfo) {
     }
 }
 
+void display_image(char *image_number)
+{
+    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
+    if (NULL == rgb565) {
+        ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
+        return;
+    }
+
+    uint8_t *buf = malloc(IMAGE_MAX_SIZE);
+    if (NULL == buf) {
+        ESP_LOGE(TAG, "can't alloc memory for jpeg file buffer");
+        return;
+    }
+    
+    int read_bytes = 0;
+
+    char file_path[20];
+    snprintf(file_path, sizeof(file_path), "/spiffs/image%s.jpg", image_number);
+
+    FILE *fd = fopen(file_path, "r");
+    read_bytes = fread(buf, 1, IMAGE_MAX_SIZE, fd);
+    fclose(fd);
+
+    if (read_bytes > 0) {
+        ESP_LOGI(TAG, "spiffs:read_bytes:%d  fd: %p", read_bytes, fd);
+        jpg2rgb565(buf, read_bytes, rgb565, JPG_SCALE_NONE);
+        lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
+        lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
+    } else {
+        ESP_LOGW(TAG, "spiffs: No data read from file");
+    }
+    
+    free(buf);
+    free(rgb565);
+    vTaskDelay(2000 / portTICK_RATE_MS);
+}
+
 static bool https_native_request(const char *qor_id, ProductInfo *product_info) {
     char output_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
     int content_length = 0;
 
     esp_http_client_config_t config = {
-        .url = "http://54.246.162.92:1037/item/details",
+        .url = "https://iot.api.pastav.com/item/details",
         .method = HTTP_METHOD_POST,
+        .auth_type = HTTP_AUTH_TYPE_BASIC,
+        .client_cert_pem = client_cert_pem,
+        .client_key_pem = private_key_pem,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+       .crt_bundle_attach = esp_crt_bundle_attach,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -561,10 +584,18 @@ static bool https_native_request(const char *qor_id, ProductInfo *product_info) 
         esp_http_client_cleanup(client);
         return false;
     }
+    
+    int status = esp_http_client_get_status_code(client);
+    if (status != 201) {
+        ESP_LOGI(TAG, "Error in the Request Fetch Product Details Status: %d", status);
+        free(post_data);
+        esp_http_client_cleanup(client);
+        display_image("3");
+        return false;
+    }
 
     int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER);
     if (data_read >= 0) {
-        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d", esp_http_client_get_status_code(client), content_length);
         interpret_json_response(output_buffer, product_info);
     } else {
         ESP_LOGE(TAG, "Failed to read response");
@@ -575,13 +606,84 @@ static bool https_native_request(const char *qor_id, ProductInfo *product_info) 
     return true;
 }
 
+static bool get_payment_status(const char *trolley_id) {
+    
+    bool  payment_status = false;
+    int content_length = 0;
+
+    char *output_buffer = malloc(MAX_HTTP_OUTPUT_BUFFER);
+    if (NULL == output_buffer) {
+        ESP_LOGE(TAG, "can't alloc memory for output buffer");
+        return payment_status;
+    }
+
+    char url[MAX_HTTP_RECV_BUFFER];
+    snprintf(url, sizeof(url), "https://iot.api.pastav.com/item/payment?trolley_id=%s", trolley_id);
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .auth_type = HTTP_AUTH_TYPE_BASIC,
+        .client_cert_pem = client_cert_pem,
+        .client_key_pem = private_key_pem,
+       .transport_type = HTTP_TRANSPORT_OVER_SSL,
+       .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+        free(output_buffer);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    content_length = esp_http_client_fetch_headers(client);
+    if (content_length < 0) {
+        ESP_LOGE(TAG, "HTTP client fetch headers failed");
+        free(output_buffer);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    int status = esp_http_client_get_status_code(client);
+    if ( status != 200) {
+        ESP_LOGI(TAG, "Error in the Request Get Payment Status: %d", status);
+        free(output_buffer);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER);
+    if (data_read >= 0) {
+        cJSON *json = cJSON_Parse(output_buffer);
+        if (json != NULL) {
+            cJSON *payment_status_json = cJSON_GetObjectItem(json, "payment_status");
+            if (cJSON_IsBool(payment_status_json)) {
+                payment_status = cJSON_IsTrue(payment_status_json);
+            }
+            cJSON_Delete(json);
+        } else {
+            ESP_LOGE(TAG, "Failed to parse JSON response");
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to read response");
+    }
+
+    free(output_buffer);
+    esp_http_client_cleanup(client);
+    return payment_status;
+}
+
 void lcd_initialize() {
     lcd_config_t lcd_config = {
 #ifdef CONFIG_LCD_ST7789
-        .clk_fre         = 80 * 1000 * 1000, /*!< ILI9341 Stable frequency configuration */
+        .clk_fre         = 80 * 1000 * 1000,
 #endif
 #ifdef CONFIG_LCD_ILI9341
-        .clk_fre         = 40 * 1000 * 1000, /*!< ILI9341 Stable frequency configuration */
+        .clk_fre         = 40 * 1000 * 1000,
 #endif
         .pin_clk         = LCD_CLK,
         .pin_mosi        = LCD_MOSI,
@@ -590,11 +692,12 @@ void lcd_initialize() {
         .pin_rst         = LCD_RST,
         .pin_bk          = LCD_BK,
         .max_buffer_size = 2 * 1024,
-        .horizontal      = 2, /*!< 2: UP, 3: DOWN */
+        .horizontal      = 2,
         .swap_data       = 1,
     };
 
     lcd_init(&lcd_config);
+    ESP_LOGI(TAG, "LCD Initiated");
 }
 
 #define CHAR_WIDTH 8
@@ -603,10 +706,9 @@ void lcd_initialize() {
 #define CHAR_SPACING 4
 
 void drawChar(uint16_t *data_buf, int x, int y, char character, uint16_t color) {
-    // Convert to uppercase
+    
     character = toupper(character);
 
-    // Check for valid character range
     if (character >= 'A' && character <= 'Z') {
         int charIndex = character - 'A';
         for (int col = 0; col < CHAR_WIDTH; col++) {
@@ -622,14 +724,13 @@ void drawChar(uint16_t *data_buf, int x, int y, char character, uint16_t color) 
 void drawString(uint16_t *data_buf, int x, int y, const char *message, uint16_t color) {
     while (*message != '\0') {
         drawChar(data_buf, x, y, *message, color);
-        x += CHAR_WIDTH + CHAR_SPACING; // Adjust spacing based on font and desired character separation
+        x += CHAR_WIDTH + CHAR_SPACING;
         message++;
     }
 }
 
 void display_table(TableRow **messageArray, int numRows, int numCols)
 {
-    ESP_LOGI(TAG, "LCD Initiated");
     int tableRows = 11;
     int tableCols = 2;
     int cellHeight = IMAGE_WIDTH / tableRows;
@@ -637,17 +738,14 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
     int cellWidthRight  = IMAGE_HEIGHT / 3;
     int cellWidthLeft = IMAGE_HEIGHT - cellWidthRight; 
 
-    // Allocate memory for color buffer (assuming 16-bit color)
     uint16_t *data_buf = (uint16_t *)malloc(IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
 
     if (data_buf == NULL) {
-        // Handle memory allocation failure
         ESP_LOGE(TAG, "Failed to allocate memory for data_buf");
-        return; // Or take appropriate action   
+        return;
     }
 
 
-    // Clear the buffer with white background
     for (int j = 0; j < IMAGE_HEIGHT; j++) {
         for (int i = 0; i < IMAGE_WIDTH; i++) {
             data_buf[i + IMAGE_WIDTH * j] = color565(255, 255, 255);
@@ -666,12 +764,10 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
         }
     }
 
-    // Draw table outline with cell padding and spacing
     for (int row = 0; row < tableRows; row++) {
         int x = row * cellHeight;
         for (int i = 0; i < IMAGE_WIDTH; i++) {
             if (row > 0) {
-                // Draw horizontal lines for top and bottom of cells (except top row)
                 data_buf[x + IMAGE_WIDTH * i] = color565(0, 0, 0);
             }
         }
@@ -681,26 +777,24 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
         int y = col * cellWidthRight;
         for (int j = 0; j < IMAGE_WIDTH; j++) {
             if (col > 0) {
-                // Draw vertical lines for left and right of cells (except leftmost column)
                 data_buf[j + IMAGE_WIDTH * y] = color565(0, 0, 0);
             }
         }
     }
 
     for (int i = 0; i < IMAGE_WIDTH; i++) {
-        data_buf[i] = color565(0, 0, 0);  // Top boundary
-        data_buf[i + IMAGE_WIDTH * (IMAGE_HEIGHT - 1)] = color565(0, 0, 0);  // Bottom boundary
+        data_buf[i] = color565(0, 0, 0);
+        data_buf[i + IMAGE_WIDTH * (IMAGE_HEIGHT - 1)] = color565(0, 0, 0);
     }
 
     for (int j = 0; j < IMAGE_HEIGHT; j++) {
-        data_buf[j * IMAGE_WIDTH] = color565(0, 0, 0);  // Left boundary
-        data_buf[IMAGE_WIDTH - 1 + IMAGE_WIDTH * j] = color565(0, 0, 0);  // Right boundary
+        data_buf[j * IMAGE_WIDTH] = color565(0, 0, 0);
+        data_buf[IMAGE_WIDTH - 1 + IMAGE_WIDTH * j] = color565(0, 0, 0);
     }
 
     int x = 14.5;
     int y = 230;
 
-    // Display messages in each cell in black
     for (int row = 0; row < numRows; row++) {
         const char *originalProductName = messageArray[row]->productName;
         double originalPrice = messageArray[row]->price;
@@ -734,7 +828,7 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
                     for (int chrow = 0; chrow < 7; chrow++) {
                         if ((charData[chcol] >> chrow) & 0x01) {
                             if((row == numRows-1)) { x = 300; }
-                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0); // Black color
+                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0);
                         }
                     }
                 }
@@ -755,7 +849,7 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
                     for (int chrow = 0; chrow < 7; chrow++) {
                         if ((charData[chcol] >> chrow) & 0x01) {
                             if((row == numRows-1)) { x = 300; }
-                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0); // Black color
+                            data_buf[(x + chcol) + IMAGE_WIDTH * (y + chrow)] = color565(0, 0, 0);
                         }
                     }
                 }
@@ -770,7 +864,6 @@ void display_table(TableRow **messageArray, int numRows, int numCols)
         y=230;
     }
 
-    // Display the color table
     lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
     lcd_write_data((uint8_t *)data_buf, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
     heap_caps_free(data_buf);
@@ -781,7 +874,6 @@ void addRow(TableRow ***table, size_t *rowCount, double *total, const char *prod
 
     for (size_t i = 0; i < *rowCount; i++) {
         if ((*table)[i]->product_id == product_id && product_id != 11 && product_id != 0) {
-            // Product with the same product_id already exists, increment quantity
             (*table)[i]->quantity++;
             double price_as_double = strtod(price, NULL);
             *total+=price_as_double;
@@ -879,39 +971,14 @@ void cancel_payment(TableRow **table, int rowCount, double total)
     }
 }
 
-void display_image()
-{
-    uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
-    if (NULL == rgb565) {
-        ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
-        return;
+void rotate_image_180(uint8_t* image, int width, int height) {
+  for (int y = 0; y < height / 2; y++) {
+    for (int x = 0; x < width; x++) {
+      int temp = image[y * width + x];
+      image[y * width + x] = image[(height - 1 - y) * width + (width - 1 - x)];
+      image[(height - 1 - y) * width + (width - 1 - x)] = temp;
     }
-
-    uint8_t *buf = malloc(IMAGE_MAX_SIZE);
-    if (NULL == buf) {
-        ESP_LOGE(TAG, "can't alloc memory for jpeg file buffer");
-        return;
-    }
-    
-    int read_bytes = 0;
-
-    FILE *fd = fopen("/spiffs/image.jpg", "r");
-    read_bytes = fread(buf, 1, IMAGE_MAX_SIZE, fd);
-    fclose(fd);
-
-    if (read_bytes > 0) {
-        ESP_LOGI(TAG, "spiffs:read_bytes:%d  fd: %p", read_bytes, fd);
-        jpg2rgb565(buf, read_bytes, rgb565, JPG_SCALE_NONE);
-        lcd_set_index(0, 0, IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1);
-        lcd_write_data(rgb565, IMAGE_WIDTH * IMAGE_HEIGHT * sizeof(uint16_t));
-    } else {
-        ESP_LOGW(TAG, "spiffs: No data read from file");
-    }
-    
-    // Free allocated memory
-    free(buf);
-    free(rgb565);
-    vTaskDelay(2000 / portTICK_RATE_MS);
+  }
 }
 
 void payments_task(TableRow **table, int rowCount, double total, char *trolley_id) {
@@ -927,11 +994,9 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
         ESP_LOGI(TAG, "Total payment to be done : %.2f", total);
         display_table(table, rowCount, 2);
 
-        // Construct JSON payload
         cJSON *root = cJSON_CreateObject();
         cJSON_AddStringToObject(root, "trolley_id", trolley_id);
 
-        // Construct prodID and quantity arrays
         cJSON *prodID_array = cJSON_CreateArray();
         cJSON *quantity_array = cJSON_CreateArray();
         for (int i = 1; i < rowCount; i++) {
@@ -941,19 +1006,15 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
             }
         }
 
-        // Convert prodID_array to string
         char *prodID_string = cJSON_Print(prodID_array);
         cJSON_Delete(prodID_array);
 
-        // Convert quantity_array to string
         char *quantity_string = cJSON_Print(quantity_array);
         cJSON_Delete(quantity_array);
 
-        // Remove brackets from the strings
         prodID_string[strlen(prodID_string) - 1] = '\0';
         quantity_string[strlen(quantity_string) - 1] = '\0';
 
-        // Add prodID and quantity strings to the payload
         cJSON_AddStringToObject(root, "prodID", &prodID_string[1]);
         cJSON_AddStringToObject(root, "quantity", &quantity_string[1]);
 
@@ -962,18 +1023,19 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
         char *payload = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
 
-        //ESP_LOGI(TAG, "HTTP POST Payload: %s", payload);
-
         int content_length = 0;
 
-        // Configure HTTP client
         esp_http_client_config_t config = {
-            .url = "http://54.246.162.92:1037/payment/start/base64",
+            .url = "https://iot.api.pastav.com/payment/start/base64",
             .method = HTTP_METHOD_POST,
-            .timeout_ms = 5000,
+            .auth_type = HTTP_AUTH_TYPE_BASIC,
+            .client_cert_pem = client_cert_pem,
+            .client_key_pem = private_key_pem,
+            .transport_type = HTTP_TRANSPORT_OVER_SSL,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .timeout_ms = 3000,
         };
 
-        // Perform HTTP request
         esp_http_client_handle_t client = esp_http_client_init(&config);
         esp_http_client_set_header(client, "Content-Type", "application/json");
 
@@ -1001,6 +1063,15 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
             return;
         }
 
+        int status = esp_http_client_get_status_code(client);
+        if (status != 200) {
+            ESP_LOGI(TAG, "Error in the Request Payment Task Status: %d", status);
+            free(payload);
+            esp_http_client_cleanup(client);
+            display_image("3");
+            return;
+        }
+
         char *output_buffer = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER2);
         if (output_buffer == NULL) {
             ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
@@ -1017,19 +1088,20 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
 
         int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER2);
         if (data_read >= 0) {
-            //ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d", esp_http_client_get_status_code(client), content_length);
-            
             cJSON *root = cJSON_Parse(output_buffer);
             if (root) {
                 cJSON *image_base64 = cJSON_GetObjectItem(root, "base64_string");
-
+                //cJSON *url = cJSON_GetObjectItem(root, "URL");
                 if (image_base64 && image_base64->type == cJSON_String) {
                     image_data = strdup(image_base64->valuestring);
+                    //ESP_LOGI(TAG, "URL : %s", url->valuestring);
                 }
                 cJSON_Delete(root);
             }
 
         } else {
+            free(output_buffer);
+            free(image_data);
             ESP_LOGE(TAG, "Failed to read response");
         }
 
@@ -1039,9 +1111,12 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
         free(prodID_string);
         esp_http_client_cleanup(client);
 
+        //ESP_LOGI(TAG, "IMAGE DATA: %s", image_data);
+
         size_t decoded_size = 0;
         unsigned char *decoded_data = malloc(MAX_HTTP_OUTPUT_BUFFER2);
         if (decoded_data == NULL) {
+            free(image_data);
             ESP_LOGE(TAG, "can't alloc memory for decoded data buffer");
             return;
         }
@@ -1057,6 +1132,7 @@ void payments_task(TableRow **table, int rowCount, double total, char *trolley_i
 
         uint8_t *rgb565 = malloc(IMAGE_WIDTH * IMAGE_HEIGHT * 2);
         if (NULL == rgb565) {
+            free(decoded_data);
             ESP_LOGE(TAG, "can't alloc memory for rgb565 buffer");
             return;
         }
@@ -1077,7 +1153,6 @@ static unsigned long weight_reading_task(void)
     weight = hx711_get_units(AVG_SAMPLES);
     ESP_LOGI(TAG, "Weight Reading: %ld\n ", weight);
     return weight;
-    //vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
 static void initialise_weight_sensor(void)
@@ -1087,18 +1162,24 @@ static void initialise_weight_sensor(void)
     hx711_tare();
 }
 
-bool is_item_added_removed(unsigned long current_weight, unsigned long initial_weight, unsigned long product_weight, bool is_removed) {
-    long weight;
+bool is_item_added_removed(unsigned long current_weight, unsigned long initial_weight, unsigned long product_weight, 
+                            bool is_removed, TableRow **table, int rowCount) {
+    long judge_weight;
+    long weight_diff = (long)current_weight - (long)initial_weight;
     if (is_removed) {
-        weight = (long)(initial_weight - product_weight) - (long)current_weight;
+        judge_weight = weight_diff + (long)product_weight;
     } else {
-        weight = (long)(initial_weight + product_weight) - (long)current_weight;
+        judge_weight = weight_diff - (long)product_weight;
     }
     
-    if (weight >= -100 && weight < 100) {
+    ESP_LOGI(TAG, "Current Weight: %ld Initial Weight: %ld Product Weight: %ld", current_weight, initial_weight, product_weight);
+    ESP_LOGI(TAG, "Weight Diff: %ld", weight_diff);
+    if (judge_weight >= -7000 && judge_weight < 7000) {
         return true;
     } else {
-        if (abs(initial_weight - current_weight) > 120) {
+        if (weight_diff >= -7000 && weight_diff < 7000) {
+            return false;
+        } else{
             while (1) {
                 double voltage = 0;
                 xQueueReceive(adc_queue, &voltage, portMAX_DELAY);
@@ -1111,6 +1192,8 @@ bool is_item_added_removed(unsigned long current_weight, unsigned long initial_w
                 }
 
                 ESP_LOGI(TAG, "Call Customer Assistance!!");
+                display_image("4");
+                display_table(table, rowCount, 2);  
             }
         }
     }
@@ -1128,8 +1211,6 @@ void spiffs_initialize() {
       .format_if_mount_failed = true
     };
 
-    // Use settings defined above to initialize and mount SPIFFS filesystem.
-    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
     esp_err_t ret = esp_vfs_spiffs_register(&conf);
 
     if (ret != ESP_OK) {
@@ -1164,7 +1245,6 @@ void spiffs_initialize() {
         ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
     }
 
-    // Check consistency of reported partiton size info.
     if (used > total) {
         ESP_LOGW(TAG, "Number of used bytes cannot be larger than total. Performing SPIFFS_check().");
         ret = esp_spiffs_check(conf.partition_label);
@@ -1180,12 +1260,10 @@ void spiffs_initialize() {
 
 void button_task(void *arg)
 {
-    /*!<Continuously sample ADC1*/
     while (1) {
         uint32_t adc_reading = 0;
         double voltage = 0;
 
-        /*!< Multisampling */
         for (int i = 0; i < NO_OF_SAMPLES; i++) {
             if (unit == ADC_UNIT_1) {
                 adc_reading += adc1_get_raw((adc1_channel_t)channel);
@@ -1235,28 +1313,33 @@ static void decode_task()
     ESP_ERROR_CHECK(strip->set_pixel(strip, 0, 255, 255, 255));
     ESP_ERROR_CHECK(strip->refresh(strip, 0));
 
-    //char trolley_id[17];
-    //static const char alphanumeric[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    //int i;
-    //for (i = 0; i < 16; ++i) {
-    //    trolley_id[i] = alphanumeric[rand() % (sizeof(alphanumeric) - 1)];
-    //}
-    //trolley_id[16] = '\0';
-
+    char trolley_id[14];
+    
+    strcpy(trolley_id, "73440060723");
+    ESP_LOGI(TAG, "Trolley ID Generated %s", trolley_id);
+    
     while (1)
     {
-        payments_task(table, rowCount, total, "4");
+        payments_task(table, rowCount, total, trolley_id);
         cancel_payment(table, rowCount, total);
-        
+        bool payment_status = get_payment_status(trolley_id);
+
+        if(payment_status){
+            ESP_LOGI(TAG, "Payment was successful. Resetting trolley...");
+            display_image("1");
+            vTaskDelay(4000 / portTICK_PERIOD_MS);
+            esp_restart();
+        }
+
         fb = esp_camera_fb_get();
         if(fb == NULL){
             ESP_LOGI(TAG, "Camera get failed\n");
             continue;
         }
 
-        ESP_LOGI(TAG, "Waiting for a qr code to be scanned");
+        //ESP_LOGI(TAG, "Waiting for a qr code to be scanned");
         time1 = esp_timer_get_time();
-        // Decode Progress
+        
         esp_image_scanner_t *esp_scn = esp_code_scanner_create();
         esp_code_scanner_config_t config = {ESP_CODE_SCANNER_MODE_FAST, ESP_CODE_SCANNER_IMAGE_RGB565, fb->width, fb->height};
         esp_code_scanner_set_config(esp_scn, config);
@@ -1281,12 +1364,15 @@ static void decode_task()
                     if(get_adc_remove() || is_removed){
                         ESP_LOGI(TAG, "Remove item from the cart ...");
                         is_removed = true;
+                        //display_image("5");
                     } else {
                         ESP_LOGI(TAG, "Place item in the cart ...");
+                        display_image("2");
+                        vTaskDelay(3000 / portTICK_PERIOD_MS);
                     }
                     unsigned long current_weight = weight_reading_task();
                     ESP_LOGI(TAG, "Current Weight: %ld", current_weight);
-                    if(is_item_added_removed(current_weight, initial_weight, weight, is_removed)){
+                    if(is_item_added_removed(current_weight, initial_weight, weight, is_removed, table, rowCount)){
                         ESP_LOGI(TAG, "Item placed/removed in the cart!");
                         initial_weight = current_weight;
                         break;
@@ -1346,13 +1432,11 @@ void app_main()
     wifi_init_sta();
     initialise_weight_sensor();
 
-    // Wait for the WiFi connection to be established
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     lcd_initialize();
     spiffs_initialize();
 
-    /*< RGB display */
     esp_color_display();
 
     ESP_ERROR_CHECK(example_rmt_init(CONFIG_EXAMPLE_RMT_TX_GPIO, CONFIG_EXAMPLE_STRIP_LED_NUMBER, RMT_CHANNEL_0));
