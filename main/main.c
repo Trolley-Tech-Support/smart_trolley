@@ -1364,7 +1364,7 @@ static void decode_task()
                     if(get_adc_remove() || is_removed){
                         ESP_LOGI(TAG, "Remove item from the cart ...");
                         is_removed = true;
-                        //display_image("5");
+                        display_image("5");
                     } else {
                         ESP_LOGI(TAG, "Place item in the cart ...");
                         display_image("2");
