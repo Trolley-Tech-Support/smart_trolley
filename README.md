@@ -39,6 +39,12 @@ The system architecture ensures efficient data flow and secure transactions, enh
 ![image](https://github.com/Trolley-Tech-Support/smart_trolley/assets/22334352/d24b6276-25cd-4ea7-97ac-d7df9dd25b00)
 
 
+### Video Demo
+
+Watch in action on YouTube: [Application Demo](https://www.youtube.com/watch?v=)
+
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/X07N3M-yb5E/0.jpg)](https://youtu.be/X07N3M-yb5E)
+
 ### Contribution Guidelines
 We welcome contributions from the developer community to improve and enhance the functionality of the smart trolley system.
 If you encounter any issues or have suggestions for improvements, please open an issue on GitHub.
